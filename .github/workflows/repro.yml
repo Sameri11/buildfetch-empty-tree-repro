@@ -1,0 +1,43 @@
+name: Repro
+
+# Needs repository secrets REMOTE_CACHE (e.g. grpcs://cache.example.com),
+# REMOTE_INSTANCE_NAME and REMOTE_TOKEN (write access).
+# The job fails while the cache does not serve //:dir_with_empty_file.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ubuntu-latest ships Bazelisk as `bazel`; it downloads the version in .bazelversion.
+      - name: Run repro.sh
+        env:
+          REMOTE_CACHE: ${{ secrets.REMOTE_CACHE }}
+          REMOTE_INSTANCE_NAME: ${{ secrets.REMOTE_INSTANCE_NAME }}
+          REMOTE_TOKEN: ${{ secrets.REMOTE_TOKEN }}
+        run: |
+          set -o pipefail
+          ./repro.sh | tee "$RUNNER_TEMP/repro.txt"
+
+      - name: Show the result on the run page
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/repro.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Bazel's gRPC logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: grpc-logs
+          path: logs/

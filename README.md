@@ -19,6 +19,10 @@ The script:
 2. Runs `bazel clean --expunge`, which removes all local outputs and caches.
 3. Builds each target again. Both should be remote cache hits.
 
+### On GitHub Actions
+
+Add repository secrets `REMOTE_CACHE`, `REMOTE_INSTANCE_NAME` and `REMOTE_TOKEN`. Every push, or a manual run from the **Actions** tab, then runs `repro.sh` on `ubuntu-latest` (`.github/workflows/repro.yml`). The job fails while the bug is present. The output is shown in the run summary, and the gRPC logs are attached as the `grpc-logs` artifact.
+
 ## Result
 
 ```
