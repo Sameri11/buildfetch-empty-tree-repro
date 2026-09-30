@@ -1,0 +1,13 @@
+load(":defs.bzl", "dir_with_file")
+
+# Output directory holding a 0-byte file: never served from the cache.
+dir_with_file(
+    name = "dir_with_empty_file",
+    content = "",
+)
+
+# Output directory holding a 1-byte file: served from the cache.
+dir_with_file(
+    name = "dir_with_one_byte_file",
+    content = "x",
+)

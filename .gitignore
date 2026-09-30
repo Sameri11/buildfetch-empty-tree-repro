@@ -1,0 +1,3 @@
+/bazel-*
+/logs/
+MODULE.bazel.lock
