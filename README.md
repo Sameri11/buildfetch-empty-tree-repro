@@ -7,7 +7,7 @@ A Bazel action that writes a **0-byte file inside an output directory** never ge
 Requires [Bazelisk](https://github.com/bazelbuild/bazelisk) (installed as `bazel`); `.bazelversion` pins Bazel 9.2.0.
 
 ```sh
-REMOTE_CACHE=grpcs://cache.eu-central-a.buildfetch.com \
+REMOTE_CACHE=<cache_url> \
 REMOTE_INSTANCE_NAME=<instance name> \
 REMOTE_TOKEN=<token with write access> \
 ./repro.sh
@@ -35,6 +35,12 @@ Add repository secrets `REMOTE_CACHE`, `REMOTE_INSTANCE_NAME` and `REMOTE_TOKEN`
 ```
 
 This was produced on macOS against `cache.eu-central-a.buildfetch.com` on 2026-09-30. Linux CI runners give the same result. The script exits with status 1 while the bug is present.
+
+Control: the same script against [bazel-remote](https://github.com/buchgr/bazel-remote) 2.6.2 (`--grpc_address localhost:9092`, "gRPC AC dependency checks: enabled") reports **HIT** for both targets and exits 0:
+
+```sh
+REMOTE_CACHE=grpc://localhost:9092 REMOTE_INSTANCE_NAME=repro ./repro.sh
+```
 
 `logs/` holds Bazel's `--remote_grpc_log` for each build: every cache call with its status. For `//:dir_with_empty_file`, build 1 records `UpdateActionResult` → OK, and step 3 records `GetActionResult` → `NOT_FOUND` for the same action digest.
 
