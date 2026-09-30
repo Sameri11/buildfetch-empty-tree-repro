@@ -17,18 +17,35 @@ flags=(
 if [[ -n "${REMOTE_TOKEN:-}" ]]; then
   flags+=(--remote_cache_header="Authorization=Bearer $REMOTE_TOKEN")
 fi
-mkdir -p logs
+rm -rf logs && mkdir -p logs
 
 summary() { grep -Eo '[0-9]+ process(es)?: .*' || true; }
 
+# Every cache call Bazel made, decoded from --remote_grpc_log.
+calls() {
+  if command -v python3 >/dev/null; then
+    echo "  Cache calls recorded by Bazel (--remote_grpc_log):"
+    python3 grpclog.py "$1"
+  fi
+}
+
+echo "$(bazel --version) against $REMOTE_CACHE"
+echo
 echo "== 1. Build both targets: each action runs locally and uploads its result"
 bazel build "${flags[@]}" --remote_grpc_log="$PWD/logs/1-upload.grpclog" //... 2>&1 | summary
+for target in dir_with_empty_file dir_with_one_byte_file; do
+  echo "  bazel-bin/$target/file: $(wc -c < "bazel-bin/$target/file" | tr -d ' ') bytes"
+done
+calls logs/1-upload.grpclog
 
+echo
 echo "== 2. bazel clean --expunge (drop every local output and local cache)"
 bazel clean --expunge 2>/dev/null
 
+echo
 echo "== 3. Build each target again: both should be remote cache hits"
 missed=0
+results=()
 for target in dir_with_empty_file dir_with_one_byte_file; do
   line=$(bazel build "${flags[@]}" --remote_grpc_log="$PWD/logs/3-$target.grpclog" "//:$target" 2>&1 | summary)
   if [[ "$line" == *"remote cache hit"* ]]; then
@@ -37,8 +54,13 @@ for target in dir_with_empty_file dir_with_one_byte_file; do
     verdict="MISS (executed again)"
     missed=1
   fi
-  printf '%-26s %-22s %s\n' "//:$target" "$verdict" "$line"
+  results+=("$(printf '%-26s %-22s %s' "//:$target" "$verdict" "$line")")
+  echo "  //:$target: $line"
+  calls "logs/3-$target.grpclog"
 done
 
-echo "Bazel's gRPC logs of every cache call (--remote_grpc_log): logs/"
+echo
+echo "== Result"
+printf '%s\n' "${results[@]}"
+echo "Raw gRPC logs: logs/"
 exit "$missed"

@@ -21,28 +21,60 @@ The script:
 
 ### On GitHub Actions
 
-Add repository secrets `REMOTE_CACHE`, `REMOTE_INSTANCE_NAME` and `REMOTE_TOKEN`. Every push, or a manual run from the **Actions** tab, then runs `repro.sh` on `ubuntu-latest` (`.github/workflows/repro.yml`). The job fails while the bug is present. The output is shown in the run summary, and the gRPC logs are attached as the `grpc-logs` artifact.
+Two workflows run on every push, or by hand from the **Actions** tab, both on `ubuntu-latest`. Each shows the `repro.sh` output in the run summary and attaches the gRPC logs as an artifact.
+
+| Workflow | Cache | Expected |
+|---|---|---|
+| `Repro` (`.github/workflows/repro.yml`) | From repository secrets `REMOTE_CACHE`, `REMOTE_INSTANCE_NAME`, `REMOTE_TOKEN` | Fails while the bug is present |
+| `Reference (bazel-remote)` (`.github/workflows/reference-bazel-remote.yml`) | [bazel-remote](https://github.com/buchgr/bazel-remote) 2.6.2 started on the runner; no secrets | Passes: both targets are HITs |
 
 ## Result
 
+Final lines of `repro.sh`:
+
 ```
-== 1. Build both targets: each action runs locally and uploads its result
-3 processes: 1 internal, 2 darwin-sandbox.
-== 2. bazel clean --expunge (drop every local output and local cache)
-== 3. Build each target again: both should be remote cache hits
+== Result
 //:dir_with_empty_file     MISS (executed again)  2 processes: 1 internal, 1 darwin-sandbox.
 //:dir_with_one_byte_file  HIT                    2 processes: 1 remote cache hit, 1 internal.
 ```
 
-This was produced on macOS against `cache.eu-central-a.buildfetch.com` on 2026-09-30. Linux CI runners give the same result. The script exits with status 1 while the bug is present.
+Each build is run with `--remote_grpc_log`, and `grpclog.py` prints every cache call Bazel made, with the status the server returned (Python 3, no dependencies). Trimmed:
 
-Control: the same script against [bazel-remote](https://github.com/buchgr/bazel-remote) 2.6.2 (`--grpc_address localhost:9092`, "gRPC AC dependency checks: enabled") reports **HIT** for both targets and exits 0:
+```
+== 1. Build both targets: each action runs locally and uploads its result
+  bazel-bin/dir_with_empty_file/file: 0 bytes
+    //:dir_with_empty_file
+      GetActionResult     NOT_FOUND  action 8ffecd31…cde5/145
+      FindMissingBlobs    OK         asked about 1d46da9b…a205/80 (Tree), 9c619abd…314d/235 (Command), 8ffecd31…cde5/145 (Action), e3b0c442…b855/0; 2 missing
+      Write               OK         uploaded 9c619abd…314d/235
+      Write               OK         uploaded 8ffecd31…cde5/145
+      UpdateActionResult  OK         action 8ffecd31…cde5/145; output dir bazel-out/…/dir_with_empty_file -> Tree 1d46da9b…a205/80
+== 3. Build each target again: both should be remote cache hits
+    //:dir_with_empty_file
+      GetActionResult     NOT_FOUND  action 8ffecd31…cde5/145
+      FindMissingBlobs    OK         asked about 8ffecd31…cde5/145, 1d46da9b…a205/80, 9c619abd…314d/235, e3b0c442…b855/0; 0 missing
+      UpdateActionResult  OK         action 8ffecd31…cde5/145; output dir bazel-out/…/dir_with_empty_file -> Tree 1d46da9b…a205/80
+    //:dir_with_one_byte_file
+      GetActionResult     OK         action d761f627…cbac/145; output dir bazel-out/…/dir_with_one_byte_file -> Tree 5cd1bd80…f638/82
+      Read                OK         downloaded 5cd1bd80…f638/82
+      Read                OK         downloaded 2d711642…4881/1
+```
+
+Step 1: the server accepts the result with `UpdateActionResult` → OK. Step 3: `GetActionResult` for the same action digest returns `NOT_FOUND`, although `FindMissingBlobs` says every blob it references is present (`0 missing`), the empty blob included. Bazel then runs the action again and uploads the same result again, also accepted with OK. The 1-byte control is served and downloaded.
+
+This was produced on macOS against `cache.eu-central-a.buildfetch.com` on 2026-09-30. The script exits with status 1 while the bug is present. Raw logs are kept in `logs/`.
+
+Control: the same script against bazel-remote 2.6.2 (with "gRPC AC dependency checks: enabled") reports **HIT** for both targets and exits 0. For the empty-file target, `GetActionResult` returns OK and Bazel downloads the Tree. It does not download the empty file, which the spec allows:
 
 ```sh
 REMOTE_CACHE=grpc://localhost:9092 REMOTE_INSTANCE_NAME=repro ./repro.sh
 ```
 
-`logs/` holds Bazel's `--remote_grpc_log` for each build: every cache call with its status. For `//:dir_with_empty_file`, build 1 records `UpdateActionResult` → OK, and step 3 records `GetActionResult` → `NOT_FOUND` for the same action digest.
+```
+    //:dir_with_empty_file
+      GetActionResult     OK         action 50c5d462…c180/145; output dir bazel-out/…/dir_with_empty_file -> Tree 1d46da9b…a205/80
+      Read                OK         downloaded 1d46da9b…a205/80
+```
 
 ## Expected behaviour (REAPI v2)
 

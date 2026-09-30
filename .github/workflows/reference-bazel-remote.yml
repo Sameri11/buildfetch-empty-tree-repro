@@ -1,0 +1,64 @@
+name: Reference (bazel-remote)
+
+# The same repro.sh against bazel-remote, the open-source cache server, started on the runner.
+# Expected to pass: both targets are served from the cache. Needs no secrets.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start bazel-remote 2.6.2
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/bazel-remote" \
+            https://github.com/buchgr/bazel-remote/releases/download/v2.6.2/bazel-remote-2.6.2-linux-amd64
+          # Upstream publishes no checksums; this is the asset's sha256 as downloaded on 2026-09-30.
+          echo "62e236bf8396e69396928e0d0c32062fbd5575f20fe55dc10a82eb791297e1a0  $RUNNER_TEMP/bazel-remote" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bazel-remote"
+          "$RUNNER_TEMP/bazel-remote" --dir "$RUNNER_TEMP/cache" --max_size 1 \
+            --grpc_address localhost:9092 --http_address localhost:9091 \
+            > "$RUNNER_TEMP/bazel-remote.log" 2>&1 &
+          for _ in $(seq 30); do
+            if (: > /dev/tcp/localhost/9092) 2>/dev/null; then
+              cat "$RUNNER_TEMP/bazel-remote.log"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/bazel-remote.log"
+          exit 1
+
+      # ubuntu-latest ships Bazelisk as `bazel`; it downloads the version in .bazelversion.
+      - name: Run repro.sh
+        env:
+          REMOTE_CACHE: grpc://localhost:9092
+          REMOTE_INSTANCE_NAME: repro
+        run: |
+          set -o pipefail
+          ./repro.sh | tee "$RUNNER_TEMP/repro.txt"
+
+      - name: Show the result on the run page
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/repro.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Bazel's gRPC logs and the bazel-remote log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: grpc-logs-bazel-remote
+          path: |
+            logs/
+            ${{ runner.temp }}/bazel-remote.log
